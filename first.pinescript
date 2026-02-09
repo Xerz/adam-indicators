@@ -1,0 +1,570 @@
+//@version=6
+indicator("MOMENTUM 2", overlay=false, max_labels_count=500)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// СБРОС СОСТОЯНИЙ ПРИ ИЗМЕНЕНИИ ТАЙМФРЕЙМА
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var string lastPeriod = ""
+var bool resetTriggered = false
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ОБЪЯВЛЕНИЕ ВСЕХ VAR ПЕРЕМЕННЫХ
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var bool filtersAllowedFixed = false
+var string filterBlockReasonFixed = ""
+
+var bool emaLongFixed = false
+var bool emaShortFixed = false
+var bool adxTrendFixed = false
+var bool atrTrendFixed = false
+var float fastWaveFixed = na
+var bool fastWaveRisingFixed = false
+var bool fastWaveFallingFixed = false
+var bool fastWaveAllowedFixed = false
+
+var bool impulseTouched = false
+var int  impulseDirection = 0  // 1 = up, -1 = down
+
+var bool signalFinalized = false
+var bool signalIsLong = false
+var bool signalIsShort = false
+
+var bool longSignalToPlot = false
+var bool shortSignalToPlot = false
+
+var bool debugEMAShapeS = false
+var bool debugADXShapeS = false
+var bool debugATRShapeS = false
+var bool debugFMWShapeS = false
+var bool debugEMAShapeL = false
+var bool debugADXShapeL = false
+var bool debugATRShapeL = false
+var bool debugFMWShapeL = false
+
+var bool signalTriggeredOnBar = false
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// СБРОС ПРИ ИЗМЕНЕНИИ ТАЙМФРЕЙМА
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+currentPeriod = timeframe.period
+
+if currentPeriod != lastPeriod
+    // Таймфрейм изменился — сбрасываем всё
+    lastPeriod := currentPeriod
+    resetTriggered := true
+
+    impulseTouched := false
+    impulseDirection := 0
+    signalFinalized := false
+    signalIsLong := false
+    signalIsShort := false
+    filtersAllowedFixed := false
+    filterBlockReasonFixed := ""
+    emaLongFixed := false
+    emaShortFixed := false
+    adxTrendFixed := false
+    atrTrendFixed := false
+    fastWaveFixed := na
+    fastWaveRisingFixed := false
+    fastWaveFallingFixed := false
+    fastWaveAllowedFixed := false
+    signalTriggeredOnBar := false
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// НАСТРОЙКИ · ИСТОЧНИК И ОСНОВА
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+src      = input.source(close, "Источник данных")
+fastLen  = input.int(14, "Длина Fast RSI")
+maxFastWave = input.float(20.0, "Макс. значение моментума", step=0.5, minval=5.0)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// НАСТРОЙКИ · ИМПУЛЬС
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+impulseLookback  = input.int(20, "Период нормы свечи", minval=5)
+impulseMult      = input.float(1.3, "Мультипликатор импульса", step=0.1, minval=1.0)
+excludeImpulse   = input.bool(true, "Исключать импульс из расчёта нормы")
+
+impulseDetectMode = input.string(
+     "По закрытию",
+     "Определение импульса",
+     options = ["По цене", "По закрытию", "LIVE"]
+)
+
+touchMode = input.string(
+     "По последней цене",
+     "Касание цели",
+     options = ["По последней цене", "По high/low"]
+)
+
+impulseMode = input.string("EASY", "Режим подтверждения", options=["EASY", "MAX"])
+
+// FW-зона (только для режима MAX)
+useFWZone = input.bool(false, "Разрешить вход около нуля (режим MAX)")
+fwZone    = input.float(5.0, "Зона вокруг 0", step=0.1, minval=0)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// НАСТРОЙКИ · ФИЛЬТРЫ ТРЕНДА
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+useEMA200 = input.bool(true, "Фильтр EMA 200")
+emaLen    = input.int(200, "Длина EMA", minval=50)
+
+useADX    = input.bool(true, "Фильтр ADX")
+adxLen    = input.int(7, "Длина ADX", minval=3)
+adxSmooth = input.int(14, "Сглаживание ADX", minval=5)
+adxMin    = input.float(22.0, "Мин. уровень ADX", step=1, minval=10)
+
+useATRRegime = input.bool(true, "Фильтр волатильности (ATR)")
+atrLen   = input.int(7, "Длина ATR", minval=3)
+atrMaLen = input.int(50, "Длина MA ATR", minval=10)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// НАСТРОЙКИ · ВИЗУАЛ
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+showFastWave  = input.bool(true, "Показывать линию моментума")
+showSignals   = input.bool(true, "Показывать сигналы")
+showEntryPrice = input.bool(true, "Показывать цену входа")
+showDebug     = input.bool(false, "Показывать дебаг (причины блокировки)")
+maxEntryLabels = input.int(200, "Максимум меток цены входа", minval=10, maxval=1000)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// БУФЕР МЕТОК ЦЕНЫ ВХОДА
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var label[] entryLabels = array.new<label>()
+f_addLabel(lbl) =>
+    array.push(entryLabels, lbl)
+    if array.size(entryLabels) > maxEntryLabels
+        label.delete(array.shift(entryLabels))
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ФУНКЦИИ ПРОВЕРКИ ФИЛЬТРОВ
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+f_trendAllowedLong(_emaLong, _adxTrend, _atrTrend) =>
+    (not useEMA200 or _emaLong) and (not useADX or _adxTrend) and (not useATRRegime or _atrTrend)
+
+f_trendAllowedShort(_emaShort, _adxTrend, _atrTrend) =>
+    (not useEMA200 or _emaShort) and (not useADX or _adxTrend) and (not useATRRegime or _atrTrend)
+
+f_momentumConfirmsLong(_fastWave, _fastWaveRising, _fastWaveAllowed) =>
+    if impulseMode == "EASY"
+        true
+    else
+        (useFWZone ? _fastWave > -fwZone : _fastWave > 0) and _fastWaveRising and _fastWaveAllowed
+
+f_momentumConfirmsShort(_fastWave, _fastWaveFalling, _fastWaveAllowed) =>
+    if impulseMode == "EASY"
+        true
+    else
+        (useFWZone ? _fastWave < fwZone : _fastWave < 0) and _fastWaveFalling and _fastWaveAllowed
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// MOMENTUM CORE
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+fastRSI  = ta.rsi(src, fastLen)
+fastWave = ta.ema(fastRSI - 50, 3)
+
+aboveBase = fastWave > 0
+belowBase = fastWave < 0
+
+fastWaveRising  = fastWave > fastWave[1]
+fastWaveFalling = fastWave < fastWave[1]
+
+fastWaveAllowed = math.abs(fastWave) <= maxFastWave
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ФИЛЬТРЫ ТРЕНДА (ТЕКУЩЕЕ СОСТОЯНИЕ)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ema200   = ta.ema(close, emaLen)
+emaLong  = close > ema200
+emaShort = close < ema200
+
+[_, _, adx] = ta.dmi(adxLen, adxSmooth)
+adxTrend = adx > adxMin
+
+atr      = ta.atr(atrLen)
+atrMA    = ta.ema(atr, atrMaLen)
+atrTrend = atr > atrMA
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ИМПУЛЬС · НОРМА (только по закрытым свечам)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Используем ТЕЛО свечи (close - open) для единообразия
+currentBodyPct = math.abs(close - open) / open * 100
+
+// Расчёт нормы на основе тел закрытых свечей
+preNormal = ta.sma(math.abs(close[1] - open[1]) / open[1] * 100, impulseLookback)
+
+// Определяем, является ли текущая свеча импульсной (в реальном времени)
+impulseRaw = currentBodyPct > preNormal * impulseMult
+
+// Исключаем импульсные свечи из расчёта нормы для следующих свечей
+filteredSize = excludeImpulse and impulseRaw ? na : currentBodyPct
+
+// Норма = среднее за последние 20 ЗАКРЫТЫХ свечей (с фильтрацией)
+normalSize = ta.sma(filteredSize[1], impulseLookback)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ИМПУЛЬС · ЦЕЛИ (известны с открытия свечи)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Защита от na в normalSize
+safeNormalSize = na(normalSize) ? preNormal : normalSize
+impulseTargetPct = safeNormalSize * impulseMult
+
+priceUp   = open * (1 + impulseTargetPct / 100)
+priceDown = open * (1 - impulseTargetPct / 100)
+
+// Минимальная дистанция цели (не меньше 1 тика)
+minTargetPct = open > 0 ? (syminfo.mintick / open) * 100 : na
+targetValid = not na(impulseTargetPct) and not na(minTargetPct) and impulseTargetPct >= minTargetPct
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ЗАЩЁЛКИ СОСТОЯНИЙ НА ОТКРЫТИИ СВЕЧИ
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+if barstate.isnew
+    // Сброс всех состояний на новой свече
+    impulseTouched := false
+    impulseDirection := 0
+    signalFinalized := false
+    signalIsLong := false
+    signalIsShort := false
+    signalTriggeredOnBar := false
+
+    // Фиксируем состояние фильтров на открытии свечи
+    emaLongFixed := close > ema200
+    emaShortFixed := close < ema200
+    adxTrendFixed := adx > adxMin
+    atrTrendFixed := atr > atrMA
+    fastWaveFixed := fastWave
+    fastWaveRisingFixed := fastWave > fastWave[1]
+    fastWaveFallingFixed := fastWave < fastWave[1]
+    fastWaveAllowedFixed := math.abs(fastWave) <= maxFastWave
+
+    // Проверяем, разрешают ли фильтры вход в ЛЮБОМ направлении
+    longAllowedFixed = f_trendAllowedLong(emaLongFixed, adxTrendFixed, atrTrendFixed)
+    shortAllowedFixed = f_trendAllowedShort(emaShortFixed, adxTrendFixed, atrTrendFixed)
+
+    if longAllowedFixed or shortAllowedFixed
+        filtersAllowedFixed := true
+        filterBlockReasonFixed := ""
+    else
+        filtersAllowedFixed := false
+        if useEMA200 and not emaLongFixed and not emaShortFixed
+            filterBlockReasonFixed := "EMA"
+        else if useADX and not adxTrendFixed
+            filterBlockReasonFixed := "ADX"
+        else if useATRRegime and not atrTrendFixed
+            filterBlockReasonFixed := "ATR"
+        else if impulseMode != "EASY" and not fastWaveAllowedFixed
+            filterBlockReasonFixed := "FMW"
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ПРОВЕРКА КАСАНИЯ ЦЕНЫ ЦЕЛИ (только одно касание на свечу)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+if not signalTriggeredOnBar and impulseDetectMode != "По закрытию" and targetValid
+    touchUp = touchMode == "По high/low" ? high >= priceUp : close >= priceUp
+    touchDown = touchMode == "По high/low" ? low <= priceDown : close <= priceDown
+    // Проверяем верхнюю цель (касание без проверки направления)
+    if touchUp
+        impulseTouched := true
+        impulseDirection := 1
+        signalTriggeredOnBar := true  // 🔒 Заблокировали остальные касания на этой свече
+    else if touchDown
+        impulseTouched := true
+        impulseDirection := -1
+        signalTriggeredOnBar := true  // 🔒 Заблокировали
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ФИНАЛИЗАЦИЯ СИГНАЛА (фиксация после касания или закрытия)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+if not signalFinalized
+    signalCondition = false
+    isLong = false
+    isShort = false
+
+    // ───── РЕЖИМ "ПО ЦЕНЕ" ─────
+    if impulseDetectMode == "По цене" and impulseTouched
+        // Используем зафиксированные на открытии значения
+        momentumOKLong = f_momentumConfirmsLong(fastWaveFixed, fastWaveRisingFixed, fastWaveAllowedFixed)
+        momentumOKShort = f_momentumConfirmsShort(fastWaveFixed, fastWaveFallingFixed, fastWaveAllowedFixed)
+
+        if impulseDirection == 1
+            longAllowed = f_trendAllowedLong(emaLongFixed, adxTrendFixed, atrTrendFixed)
+            signalCondition := filtersAllowedFixed and longAllowed and momentumOKLong
+            isLong := true
+        else if impulseDirection == -1
+            shortAllowed = f_trendAllowedShort(emaShortFixed, adxTrendFixed, atrTrendFixed)
+            signalCondition := filtersAllowedFixed and shortAllowed and momentumOKShort
+            isShort := true
+
+    // ───── РЕЖИМ LIVE ─────
+    else if impulseDetectMode == "LIVE" and impulseTouched
+        // В момент касания проверяем ТЕКУЩЕЕ состояние фильтров
+        momentumOKLong = f_momentumConfirmsLong(fastWave, fastWaveRising, fastWaveAllowed)
+        momentumOKShort = f_momentumConfirmsShort(fastWave, fastWaveFalling, fastWaveAllowed)
+
+        if impulseDirection == 1
+            longAllowed = f_trendAllowedLong(emaLong, adxTrend, atrTrend)
+            signalCondition := longAllowed and momentumOKLong
+            isLong := true
+        else if impulseDirection == -1
+            shortAllowed = f_trendAllowedShort(emaShort, adxTrend, atrTrend)
+            signalCondition := shortAllowed and momentumOKShort
+            isShort := true
+
+    // ───── РЕЖИМ "ПО ЗАКРЫТИЮ" ─────
+    else if impulseDetectMode == "По закрытию" and barstate.isconfirmed
+        // Используем зафиксированные на открытии значения
+        momentumOKLong = f_momentumConfirmsLong(fastWaveFixed, fastWaveRisingFixed, fastWaveAllowedFixed)
+        momentumOKShort = f_momentumConfirmsShort(fastWaveFixed, fastWaveFallingFixed, fastWaveAllowedFixed)
+
+        impulseByCloseUp = impulseRaw and close > open
+        impulseByCloseDown = impulseRaw and close < open
+
+        if impulseByCloseUp
+            longAllowed = f_trendAllowedLong(emaLongFixed, adxTrendFixed, atrTrendFixed)
+            signalCondition := impulseRaw and filtersAllowedFixed and longAllowed and momentumOKLong
+            isLong := true
+        else if impulseByCloseDown
+            shortAllowed = f_trendAllowedShort(emaShortFixed, adxTrendFixed, atrTrendFixed)
+            signalCondition := impulseRaw and filtersAllowedFixed and shortAllowed and momentumOKShort
+            isShort := true
+
+    // Фиксируем сигнал
+    if signalCondition
+        signalFinalized := true
+        signalIsLong := isLong
+        signalIsShort := isShort
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ЦЕНА ВХОДА (исправлена логика для "По закрытию")
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var float entryPrice = na
+
+// Для режимов "По цене" и "LIVE" — цена из касания
+if (impulseDetectMode == "По цене" or impulseDetectMode == "LIVE") and impulseTouched
+    entryPrice := impulseDirection == 1 ? priceUp : priceDown
+
+// Для режима "По закрытию" — цена цели, при которой свеча стала импульсной
+if impulseDetectMode == "По закрытию" and signalFinalized and (signalIsLong or signalIsShort)
+    if signalIsLong
+        entryPrice := priceUp
+    else if signalIsShort
+        entryPrice := priceDown
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ВИЗУАЛ · МЕТКИ ЦЕНЫ ВХОДА И ДЕБАГ
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Дебаг-блокировки (показываем только если включено и нет сигнала)
+blockEMA_L = useEMA200 and impulseTouched and impulseDirection == 1 and close < ema200
+blockADX_L = useADX and impulseTouched and impulseDirection == 1 and adx <= adxMin
+blockATR_L = useATRRegime and impulseTouched and impulseDirection == 1 and not atrTrend
+blockFMW_L = impulseMode != "EASY" and impulseTouched and impulseDirection == 1 and not fastWaveAllowed
+
+blockEMA_S = useEMA200 and impulseTouched and impulseDirection == -1 and close > ema200
+blockADX_S = useADX and impulseTouched and impulseDirection == -1 and adx <= adxMin
+blockATR_S = useATRRegime and impulseTouched and impulseDirection == -1 and not atrTrend
+blockFMW_S = impulseMode != "EASY" and impulseTouched and impulseDirection == -1 and not fastWaveAllowed
+
+// Метки цены входа
+if showEntryPrice and not na(entryPrice)
+    shouldShowLabel = false
+    labelStyle = label.style_label_center
+    labelColor = color.new(#63656d, 30)  // серый по умолчанию
+
+    // Сигнал сформирован
+    if signalFinalized and (signalIsLong or signalIsShort)
+        shouldShowLabel := true
+        labelStyle := signalIsLong ? label.style_label_up : label.style_label_down
+        labelColor := signalIsLong ? color.new(#0a440c, 30) : color.new(#991919, 30)
+
+    // Импульс без сигнала (дебаг)
+    else if showDebug and impulseTouched
+        shouldShowLabel := true
+        labelStyle := label.style_label_center
+        labelColor := color.new(#63656d, 30)
+
+    if shouldShowLabel
+        f_addLabel(label.new(
+             bar_index, fastWave,
+             "ВХОД: " + str.tostring(entryPrice, format.mintick),
+             style = labelStyle,
+             textcolor = color.white,
+             color = labelColor,
+             size = size.small))
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ВИЗУАЛ · СИГНАЛЫ (ТРЕУГОЛЬНИКИ)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+if barstate.isconfirmed
+    longSignalToPlot := false
+    shortSignalToPlot := false
+
+if showSignals and showFastWave
+    // Сигналы для режимов "По цене" и "LIVE" (после касания цели)
+    if impulseDetectMode != "По закрытию" and signalFinalized
+        longSignalToPlot := signalIsLong
+        shortSignalToPlot := signalIsShort
+
+    // Сигналы для режима "По закрытию" (только после закрытия)
+    else if impulseDetectMode == "По закрытию" and barstate.isconfirmed and signalFinalized
+        longSignalToPlot := signalIsLong
+        shortSignalToPlot := signalIsShort
+
+// Глобальные plotshape вызовы (вне условий)
+plotshape(longSignalToPlot, style=shape.triangleup, location=location.bottom, color=color.lime, size=size.small, title="Long Signal")
+plotshape(shortSignalToPlot, style=shape.triangledown, location=location.top, color=color.red, size=size.small, title="Short Signal")
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// СЕРИИ СИГНАЛОВ ДЛЯ СТРАТЕГИЙ (СКРЫТЫЕ PLOT)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+longSignalSeries = false
+shortSignalSeries = false
+
+if impulseDetectMode != "По закрытию" and signalFinalized
+    longSignalSeries := signalIsLong
+    shortSignalSeries := signalIsShort
+else if impulseDetectMode == "По закрытию" and barstate.isconfirmed and signalFinalized
+    longSignalSeries := signalIsLong
+    shortSignalSeries := signalIsShort
+
+plot(longSignalSeries ? 1 : 0, title="Long Signal (series)", display=display.none)
+plot(shortSignalSeries ? -1 : 0, title="Short Signal (series)", display=display.none)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ВИЗУАЛ · ФОН (теперь только при наличии сигналов)
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+bgcolor(
+     showSignals and (signalFinalized and signalIsLong) ? color.new(#0c6b0f, 85) :
+     showSignals and (signalFinalized and signalIsShort) ? color.new(#940d0d, 85) :
+     na
+)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ВИЗУАЛ · ДЕБАГ МЕТКИ ПРИЧИН БЛОКИРОВКИ
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+if showDebug and showFastWave
+    // SHORT блокировки
+    debugEMAShapeS := impulseTouched and impulseDirection == -1 and not signalFinalized and blockEMA_S
+    debugADXShapeS := impulseTouched and impulseDirection == -1 and not signalFinalized and not blockEMA_S and blockADX_S
+    debugATRShapeS := impulseTouched and impulseDirection == -1 and not signalFinalized and not blockEMA_S and not blockADX_S and blockATR_S
+    debugFMWShapeS := impulseTouched and impulseDirection == -1 and not signalFinalized and not blockEMA_S and not blockADX_S and not blockATR_S and blockFMW_S
+
+    // LONG блокировки
+    debugEMAShapeL := impulseTouched and impulseDirection == 1 and not signalFinalized and blockEMA_L
+    debugADXShapeL := impulseTouched and impulseDirection == 1 and not signalFinalized and not blockEMA_L and blockADX_L
+    debugATRShapeL := impulseTouched and impulseDirection == 1 and not signalFinalized and not blockEMA_L and not blockADX_L and blockATR_L
+    debugFMWShapeL := impulseTouched and impulseDirection == 1 and not signalFinalized and not blockEMA_L and not blockADX_L and not blockATR_L and blockFMW_L
+
+// Глобальные plotshape вызовы для дебага
+plotshape(debugEMAShapeS, text="EMA", style=shape.labeldown, location=location.top, color=color.new(color.red, 70), textcolor=color.white, size=size.small, title="Debug EMA Short")
+plotshape(debugADXShapeS, text="ADX", style=shape.labeldown, location=location.top, color=color.new(color.red, 70), textcolor=color.white, size=size.small, title="Debug ADX Short")
+plotshape(debugATRShapeS, text="ATR", style=shape.labeldown, location=location.top, color=color.new(color.red, 70), textcolor=color.white, size=size.small, title="Debug ATR Short")
+plotshape(debugFMWShapeS, text="FMW", style=shape.labeldown, location=location.top, color=color.new(color.red, 70), textcolor=color.white, size=size.small, title="Debug FMW Short")
+
+plotshape(debugEMAShapeL, text="EMA", style=shape.labelup, location=location.bottom, color=color.new(color.green, 70), textcolor=color.white, size=size.small, title="Debug EMA Long")
+plotshape(debugADXShapeL, text="ADX", style=shape.labelup, location=location.bottom, color=color.new(color.green, 70), textcolor=color.white, size=size.small, title="Debug ADX Long")
+plotshape(debugATRShapeL, text="ATR", style=shape.labelup, location=location.bottom, color=color.new(color.green, 70), textcolor=color.white, size=size.small, title="Debug ATR Long")
+plotshape(debugFMWShapeL, text="FMW", style=shape.labelup, location=location.bottom, color=color.new(color.green, 70), textcolor=color.white, size=size.small, title="Debug FMW Long")
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ВИЗУАЛ · ЛИНИЯ МОМЕНТУМА
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+plot(showFastWave ? fastWave : na, "Fast Momentum", color=color.aqua, linewidth=2)
+hline(0, "База", color=color.white)
+
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// ТАБЛО · РЕАЛ-ТАЙМ ПАНЕЛЬ
+//━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+var table rtPanel = table.new(position.top_right, 1, 3, bgcolor=color.new(color.black, 70))
+
+var string cell0_text = ""
+var string cell1_text = ""
+var string cell2_text = ""
+var color  cell2_color = color.white
+var color  cell2_textcolor = color.white
+
+if barstate.islast and not na(normalSize)  // ❌ Оставлено как было: normalSize
+    // Базовые расчёты
+    impulsePct = safeNormalSize * impulseMult  // ✅ safeNormalSize используется для расчётов
+    movePct = (close - open) / open * 100
+
+    isLongMove = movePct >= 0
+    sign = isLongMove ? "+" : "−"
+
+    remainPct = math.max(impulsePct - math.abs(movePct), 0)
+
+    // Формируем текст ячеек
+    cell0_text := "Норма свечи:\n" + str.tostring(safeNormalSize, "#.###") + "%"
+    cell1_text := "Импульс свечи:\n" + str.tostring(impulsePct, "#.###") + "%"
+
+    // ───── ЛОГИКА ТРЕТЬЕЙ ЯЧЕЙКИ ─────
+    if impulseDetectMode == "По закрытию"
+        // Режим "По закрытию": всегда "ждём закрытия"
+        cell2_text := "Статус:\nждём закрытия свечи"
+        cell2_color := color.new(color.gray, 0)
+        cell2_textcolor := color.white
+
+    else if impulseDetectMode == "По цене"
+        // Режим "По цене": фильтры зафиксированы на открытии
+        if not filtersAllowedFixed
+            cell2_text := "Не входить (" + filterBlockReasonFixed + ")"
+            cell2_color := color.new(color.red, 0)
+            cell2_textcolor := color.white
+        else if impulseTouched
+            // После касания — фиксируем "0%" с правильной ценой
+            actualTouchPrice = impulseDirection == 1 ? priceUp : priceDown
+            cell2_text := "0%\n(" + str.tostring(actualTouchPrice, format.mintick) + ")"
+            cell2_color := color.new(#d4af37, 0)  // золотой
+            cell2_textcolor := color.black
+        else
+            // До касания — показываем прогресс с целевой ценой
+            targetPrice = isLongMove ? priceUp : priceDown
+            cell2_text := "До импульса:\n" + sign + str.tostring(remainPct, "#.###") + "% (" + str.tostring(targetPrice, format.mintick) + ")"
+            cell2_color := isLongMove ? color.new(color.lime, 0) : color.new(color.red, 0)
+            cell2_textcolor := color.white
+
+    else if impulseDetectMode == "LIVE"
+        // Режим LIVE: динамическая проверка до касания
+        if not impulseTouched
+            // До касания — проверяем фильтры ДИНАМИЧЕСКИ на каждом тике
+            longAllowedNow = f_trendAllowedLong(emaLong, adxTrend, atrTrend)
+            shortAllowedNow = f_trendAllowedShort(emaShort, adxTrend, atrTrend)
+
+            momentumOKLong = f_momentumConfirmsLong(fastWave, fastWaveRising, fastWaveAllowed)
+            momentumOKShort = f_momentumConfirmsShort(fastWave, fastWaveFalling, fastWaveAllowed)
+
+            if not longAllowedNow and not shortAllowedNow
+                // Фильтры запрещают вход
+                reason = ""
+                if useEMA200 and not emaLong and not emaShort
+                    reason := "EMA"
+                else if useADX and not adxTrend
+                    reason := "ADX"
+                else if useATRRegime and not atrTrend
+                    reason := "ATR"
+                else if impulseMode != "EASY" and not fastWaveAllowed
+                    reason := "FMW"
+
+                cell2_text := "Не входить (" + reason + ")"
+                cell2_color := color.new(color.red, 0)
+                cell2_textcolor := color.white
+            else
+                // Фильтры разрешают — показываем прогресс с целевой ценой
+                targetPrice = isLongMove ? priceUp : priceDown
+                cell2_text := "До импульса:\n" + sign + str.tostring(remainPct, "#.###") + "% (" + str.tostring(targetPrice, format.mintick) + ")"
+                cell2_color := isLongMove ? color.new(color.lime, 0) : color.new(color.red, 0)
+                cell2_textcolor := color.white
+        else
+            // После касания — фиксируем "0%" с правильной ценой
+            actualTouchPrice = impulseDirection == 1 ? priceUp : priceDown
+            cell2_text := "0%\n(" + str.tostring(actualTouchPrice, format.mintick) + ")"
+            cell2_color := color.new(#d4af37, 0)  // золотой
+            cell2_textcolor := color.black
+
+    // Обновляем ячейки таблицы
+    table.cell(rtPanel, 0, 0, cell0_text, text_color=color.white, bgcolor=color.new(color.black, 70))
+    table.cell(rtPanel, 0, 1, cell1_text, text_color=color.white, bgcolor=color.new(color.black, 70))
+    table.cell(rtPanel, 0, 2, cell2_text, text_color=cell2_textcolor, bgcolor=cell2_color)
