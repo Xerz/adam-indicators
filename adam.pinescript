@@ -4,8 +4,9 @@ strategy("MOMENTUM 2 (Adam)", overlay=true, pyramiding=0, process_orders_on_clos
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // НАСТРОЙКИ · ИСТОЧНИК СИГНАЛОВ
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-longSignalSrc = input.source(na, "Long сигнал (из индикатора)")
-shortSignalSrc = input.source(na, "Short сигнал (из индикатора)")
+signalsConnected = input.bool(false, "Сигналы подключены")
+longSignalSrc = input.source(close, "Long сигнал (из индикатора)")
+shortSignalSrc = input.source(close, "Short сигнал (из индикатора)")
 
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // НАСТРОЙКИ · РИСК
@@ -18,8 +19,8 @@ tpPct = input.float(1.8, "Take Profit, %", minval=0.0, step=0.1)
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ВХОДЫ ПО СИГНАЛАМ ИНДИКАТОРА
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-longSignal = longSignalSrc == 1
-shortSignal = shortSignalSrc == -1
+longSignal = signalsConnected and longSignalSrc == 1
+shortSignal = signalsConnected and shortSignalSrc == -1
 
 // Входим только когда нет позиции (выходы только по SL/TP)
 if strategy.position_size == 0
