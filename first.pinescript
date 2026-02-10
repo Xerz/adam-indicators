@@ -263,8 +263,21 @@ if barstate.isnew
 // ПРОВЕРКА КАСАНИЯ ЦЕНЫ ЦЕЛИ (только одно касание на свечу)
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 if not signalTriggeredOnBar and impulseDetectMode != "По закрытию" and targetValid
-    touchUp = touchMode == "По high/low" ? high >= priceUp : close >= priceUp
-    touchDown = touchMode == "По high/low" ? low <= priceDown : close <= priceDown
+    touchUp = false
+    touchDown = false
+
+    if touchMode == "По high/low"
+        touchUp := high >= priceUp
+        touchDown := low <= priceDown
+    else
+        // В режиме "По последней цене" проверяем close, но добавляем fallback по high/low.
+        // Это устраняет пропуски касаний на агрегированных тиках и после пересчёта бара.
+        touchUp := close >= priceUp
+        touchDown := close <= priceDown
+        if not touchUp and not touchDown
+            touchUp := high >= priceUp
+            touchDown := low <= priceDown
+
     // Проверяем верхнюю цель (касание без проверки направления)
     if touchUp
         impulseTouched := true
@@ -518,11 +531,39 @@ if barstate.islast and not na(normalSize)  // ❌ Оставлено как бы
             cell2_color := color.new(color.red, 0)
             cell2_textcolor := color.white
         else if impulseTouched
-            // После касания — фиксируем "0%" с правильной ценой
-            actualTouchPrice = impulseDirection == 1 ? priceUp : priceDown
-            cell2_text := "0%\n(" + str.tostring(actualTouchPrice, format.mintick) + ")"
-            cell2_color := color.new(#d4af37, 0)  // золотой
-            cell2_textcolor := color.black
+            if signalFinalized
+                // После касания и успешного сигнала — фиксируем "0%" с правильной ценой
+                actualTouchPrice = impulseDirection == 1 ? priceUp : priceDown
+                cell2_text := "0%\n(" + str.tostring(actualTouchPrice, format.mintick) + ")"
+                cell2_color := color.new(#d4af37, 0)  // золотой
+                cell2_textcolor := color.black
+            else
+                // Касание было, но сигнал заблокирован условиями
+                reason = ""
+                if impulseDirection == 1
+                    momentumOKLong = f_momentumConfirmsLong(fastWaveFixed, fastWaveRisingFixed, fastWaveAllowedFixed)
+                    if useEMA200 and not emaLongFixed
+                        reason := "EMA"
+                    else if useADX and not adxTrendFixed
+                        reason := "ADX"
+                    else if useATRRegime and not atrTrendFixed
+                        reason := "ATR"
+                    else if impulseMode != "EASY" and not momentumOKLong
+                        reason := not fastWaveAllowedFixed ? "FMW" : "MOM"
+                else if impulseDirection == -1
+                    momentumOKShort = f_momentumConfirmsShort(fastWaveFixed, fastWaveFallingFixed, fastWaveAllowedFixed)
+                    if useEMA200 and not emaShortFixed
+                        reason := "EMA"
+                    else if useADX and not adxTrendFixed
+                        reason := "ADX"
+                    else if useATRRegime and not atrTrendFixed
+                        reason := "ATR"
+                    else if impulseMode != "EASY" and not momentumOKShort
+                        reason := not fastWaveAllowedFixed ? "FMW" : "MOM"
+
+                cell2_text := reason == "" ? "Касание без сигнала" : "Касание без сигнала (" + reason + ")"
+                cell2_color := color.new(color.orange, 0)
+                cell2_textcolor := color.black
         else
             // До касания — показываем прогресс с целевой ценой
             targetPrice = isLongMove ? priceUp : priceDown
@@ -562,11 +603,43 @@ if barstate.islast and not na(normalSize)  // ❌ Оставлено как бы
                 cell2_color := isLongMove ? color.new(color.lime, 0) : color.new(color.red, 0)
                 cell2_textcolor := color.white
         else
-            // После касания — фиксируем "0%" с правильной ценой
-            actualTouchPrice = impulseDirection == 1 ? priceUp : priceDown
-            cell2_text := "0%\n(" + str.tostring(actualTouchPrice, format.mintick) + ")"
-            cell2_color := color.new(#d4af37, 0)  // золотой
-            cell2_textcolor := color.black
+            if signalFinalized
+                // После касания и успешного сигнала — фиксируем "0%" с правильной ценой
+                actualTouchPrice = impulseDirection == 1 ? priceUp : priceDown
+                cell2_text := "0%\n(" + str.tostring(actualTouchPrice, format.mintick) + ")"
+                cell2_color := color.new(#d4af37, 0)  // золотой
+                cell2_textcolor := color.black
+            else
+                // Касание было, но сигнал заблокирован условиями
+                reason = ""
+                if impulseDirection == 1
+                    longAllowedNow = f_trendAllowedLong(emaLong, adxTrend, atrTrend)
+                    momentumOKLong = f_momentumConfirmsLong(fastWave, fastWaveRising, fastWaveAllowed)
+                    if not longAllowedNow
+                        if useEMA200 and not emaLong
+                            reason := "EMA"
+                        else if useADX and not adxTrend
+                            reason := "ADX"
+                        else if useATRRegime and not atrTrend
+                            reason := "ATR"
+                    else if impulseMode != "EASY" and not momentumOKLong
+                        reason := not fastWaveAllowed ? "FMW" : "MOM"
+                else if impulseDirection == -1
+                    shortAllowedNow = f_trendAllowedShort(emaShort, adxTrend, atrTrend)
+                    momentumOKShort = f_momentumConfirmsShort(fastWave, fastWaveFalling, fastWaveAllowed)
+                    if not shortAllowedNow
+                        if useEMA200 and not emaShort
+                            reason := "EMA"
+                        else if useADX and not adxTrend
+                            reason := "ADX"
+                        else if useATRRegime and not atrTrend
+                            reason := "ATR"
+                    else if impulseMode != "EASY" and not momentumOKShort
+                        reason := not fastWaveAllowed ? "FMW" : "MOM"
+
+                cell2_text := reason == "" ? "Касание без сигнала" : "Касание без сигнала (" + reason + ")"
+                cell2_color := color.new(color.orange, 0)
+                cell2_textcolor := color.black
 
     // Обновляем ячейки таблицы
     table.cell(rtPanel, 0, 0, cell0_text, text_color=color.white, bgcolor=color.new(color.black, 70))
