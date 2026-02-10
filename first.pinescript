@@ -212,8 +212,19 @@ impulseTargetPct = safeNormalSize * impulseMult
 
 priceUpRaw   = open * (1 + impulseTargetPct / 100)
 priceDownRaw = open * (1 - impulseTargetPct / 100)
-priceUp      = math.round_to_mintick(priceUpRaw)
-priceDown    = math.round_to_mintick(priceDownRaw)
+tickSize     = syminfo.mintick
+openTick     = math.round_to_mintick(open)
+
+// Направленное округление уровня:
+// long-цель всегда выше, short-цель всегда ниже открытия.
+priceUp      = math.ceil(priceUpRaw / tickSize) * tickSize
+priceDown    = math.floor(priceDownRaw / tickSize) * tickSize
+
+// Защита от граничных случаев (микро-норма, дробные открытие/тик и т.п.)
+if priceUp <= openTick
+    priceUp := openTick + tickSize
+if priceDown >= openTick
+    priceDown := openTick - tickSize
 
 // Минимальная дистанция цели (не меньше 1 тика)
 targetValid = not na(priceUp) and not na(priceDown) and ((priceUp > open) or (priceDown < open))
