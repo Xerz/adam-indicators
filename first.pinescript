@@ -28,6 +28,7 @@ var int  impulseDirection = 0  // 1 = up, -1 = down
 var bool signalFinalized = false
 var bool signalIsLong = false
 var bool signalIsShort = false
+var float entryPriceLatched = na
 
 var bool longSignalToPlot = false
 var bool shortSignalToPlot = false
@@ -209,12 +210,13 @@ normalSize = ta.sma(filteredSize[1], impulseLookback)
 safeNormalSize = na(normalSize) ? preNormal : normalSize
 impulseTargetPct = safeNormalSize * impulseMult
 
-priceUp   = open * (1 + impulseTargetPct / 100)
-priceDown = open * (1 - impulseTargetPct / 100)
+priceUpRaw   = open * (1 + impulseTargetPct / 100)
+priceDownRaw = open * (1 - impulseTargetPct / 100)
+priceUp      = math.round_to_mintick(priceUpRaw)
+priceDown    = math.round_to_mintick(priceDownRaw)
 
 // Минимальная дистанция цели (не меньше 1 тика)
-minTargetPct = open > 0 ? (syminfo.mintick / open) * 100 : na
-targetValid = not na(impulseTargetPct) and not na(minTargetPct) and impulseTargetPct >= minTargetPct
+targetValid = not na(priceUp) and not na(priceDown) and ((priceUp > open) or (priceDown < open))
 
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ЗАЩЁЛКИ СОСТОЯНИЙ НА ОТКРЫТИИ СВЕЧИ
@@ -227,6 +229,7 @@ if barstate.isnew
     signalIsLong := false
     signalIsShort := false
     signalTriggeredOnBar := false
+    entryPriceLatched := na
 
     // Фиксируем состояние фильтров на открытии свечи
     emaLongFixed := close > ema200
@@ -336,20 +339,21 @@ if not signalFinalized
         signalIsShort := isShort
 
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// ЦЕНА ВХОДА (исправлена логика для "По закрытию")
+// ЦЕНА ВХОДА (защёлка как в старой версии)
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-var float entryPrice = na
+if na(entryPriceLatched)
+    // Для режимов "По цене" и "LIVE" фиксируем цену цели в момент касания
+    if (impulseDetectMode == "По цене" or impulseDetectMode == "LIVE") and impulseTouched
+        entryPriceLatched := impulseDirection == 1 ? priceUp : priceDown
 
-// Для режимов "По цене" и "LIVE" — цена из касания
-if (impulseDetectMode == "По цене" or impulseDetectMode == "LIVE") and impulseTouched
-    entryPrice := impulseDirection == 1 ? priceUp : priceDown
+    // Для режима "По закрытию" фиксируем цену цели после финализации сигнала
+    if impulseDetectMode == "По закрытию" and signalFinalized and (signalIsLong or signalIsShort)
+        if signalIsLong
+            entryPriceLatched := priceUp
+        else if signalIsShort
+            entryPriceLatched := priceDown
 
-// Для режима "По закрытию" — цена цели, при которой свеча стала импульсной
-if impulseDetectMode == "По закрытию" and signalFinalized and (signalIsLong or signalIsShort)
-    if signalIsLong
-        entryPrice := priceUp
-    else if signalIsShort
-        entryPrice := priceDown
+entryPrice = entryPriceLatched
 
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // ВИЗУАЛ · МЕТКИ ЦЕНЫ ВХОДА И ДЕБАГ
@@ -397,7 +401,7 @@ if showEntryPrice and not na(entryPrice)
 // ВИЗУАЛ · СИГНАЛЫ (ТРЕУГОЛЬНИКИ)
 //━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-if barstate.isconfirmed
+if barstate.isnew
     longSignalToPlot := false
     shortSignalToPlot := false
 
